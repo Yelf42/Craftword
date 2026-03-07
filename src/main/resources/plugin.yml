@@ -1,0 +1,5 @@
+name: Craftword
+version: '1.0'
+main: yelf42.craftword.Craftword
+api-version: '1.21'
+authors: [ Yelf42 ]
