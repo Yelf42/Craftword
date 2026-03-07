@@ -9,6 +9,7 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.command.brigadier.argument.ArgumentTypes;
 import io.papermc.paper.command.brigadier.argument.resolvers.BlockPositionResolver;
+import io.papermc.paper.event.player.PlayerItemFrameChangeEvent;
 import io.papermc.paper.math.BlockPosition;
 import io.papermc.paper.math.Position;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
@@ -16,13 +17,23 @@ import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.resource.ResourcePackInfo;
 import net.kyori.adventure.resource.ResourcePackRequest;
 import net.kyori.adventure.text.Component;
-import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.World;
+import org.bukkit.*;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemFrame;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerInteractAtEntityEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.NonNull;
 
@@ -43,6 +54,15 @@ public final class Craftword extends JavaPlugin implements Listener {
         return activePlacements;
     }
 
+    public boolean withinPlacement(Entity entity) {
+        return activePlacements.stream()
+                .anyMatch(placement -> placement.isInsideGrid(entity));
+    }
+    public boolean withinPlacement(Location location) {
+        return activePlacements.stream()
+                .anyMatch(placement -> placement.isInsideGrid(location));
+    }
+
     @Override
     public void onEnable() {
         // Plugin startup logic
@@ -53,6 +73,7 @@ public final class Craftword extends JavaPlugin implements Listener {
         if (!packFile.exists()) {
             saveResource("craftword.zip", false);
         }
+
         getServer().getPluginManager().registerEvents(this, this);
 
         // Crossword folder
@@ -74,8 +95,8 @@ public final class Craftword extends JavaPlugin implements Listener {
     }
 
     private static final ResourcePackInfo PACK_INFO = ResourcePackInfo.resourcePackInfo()
-            .uri(URI.create("https://download.mc-packs.net/pack/55a3452177f93890f0982ade46da000c0dade571.zip"))
-            .hash("55a3452177f93890f0982ade46da000c0dade571")
+            .uri(URI.create("https://download.mc-packs.net/pack/af8b1259a67e2f4bdc7a4723d0734577bd423ff6.zip"))
+            .hash("af8b1259a67e2f4bdc7a4723d0734577bd423ff6")
             .build();
 
     public void sendResourcePack(final @NonNull Audience target) {
@@ -92,7 +113,72 @@ public final class Craftword extends JavaPlugin implements Listener {
         sendResourcePack(event.getPlayer());
     }
 
+    @EventHandler
+    public void onPlayerInteract(PlayerItemFrameChangeEvent event) {
+        ItemFrame frame = event.getItemFrame();
+        if (!withinPlacement(frame)) return;
+        event.setCancelled(true);
+        switch (event.getAction()) {
+            case PLACE, ROTATE:
+                ItemStack itemInHand = event.getPlayer().getInventory().getItemInMainHand();
+                if (!isLetterItem(itemInHand)) return;
+                frame.setItem(itemInHand.clone());
+                break;
+            case REMOVE:
+                frame.setItem(new ItemStack(Material.AIR));
+                break;
+            default:
+                return;
+        }
+    }
+
+    public boolean isLetterItem(ItemStack item) {
+        if (item == null || item.getItemMeta() == null) {
+            return false;
+        }
+
+        NamespacedKey model = item.getItemMeta().getItemModel();
+        return model != null &&
+                model.toString().startsWith("craftword:letter_");
+    }
+
+    // TODO prevent crossword overlap, test for crossword already existing, allow make crossword with existing file
     private void registerCommands() {
+        LiteralCommandNode<CommandSourceStack> getLetter = Commands.literal("get_letter")
+                .then(Commands.argument("letter", StringArgumentType.word())
+                        .executes(ctx -> {
+                            String letter = ctx.getArgument("letter", String.class);
+                            if (letter.length() != 1) return Command.SINGLE_SUCCESS;
+
+                            CommandSourceStack source = ctx.getSource();
+                            Entity executor = source.getExecutor();
+                            if (executor == null) {
+                                source.getSender().sendMessage(Component.text("Must be run by an entity"));
+                                return Command.SINGLE_SUCCESS;
+                            }
+
+                            char ch = letter.charAt(0);
+                            if (ch >= 'A' && ch <= 'Z') {
+                                if (executor instanceof Player player) {
+
+                                    ItemStack item = new ItemStack(Material.PAPER);
+                                    ItemMeta meta = item.getItemMeta();
+
+                                    if (meta != null) {
+                                        String letterLower = Character.toLowerCase(ch) + "";
+                                        meta.setItemModel(NamespacedKey.fromString("craftword:letter_" + letterLower));
+                                        item.setItemMeta(meta);
+                                    }
+
+                                    player.getInventory().addItem(item);
+                                }
+                            }
+
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                .build();
+
+
         LiteralCommandNode<CommandSourceStack> remove = Commands.literal("remove")
                 .then(Commands.argument("dimension", ArgumentTypes.world())
                         .then(Commands.argument("pos", ArgumentTypes.blockPosition())
@@ -204,6 +290,7 @@ public final class Craftword extends JavaPlugin implements Listener {
             commands.registrar().register(fetchRaw);
             commands.registrar().register(buildNew);
             commands.registrar().register(remove);
+            commands.registrar().register(getLetter);
         });
     }
 

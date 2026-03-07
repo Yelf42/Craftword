@@ -7,10 +7,9 @@ import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.*;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.entity.Display;
-import org.bukkit.entity.Player;
-import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.*;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
@@ -20,6 +19,11 @@ import org.joml.Vector3f;
 
 import java.util.*;
 
+
+// TODO store current placed letters (passed from onPlayerInteract),
+//  store number of placed letters to compare to total letters,
+//  check answer if num letters matches max
+//  regen on plugin onEnable
 public class CrosswordPlacement {
 
     private final Crossword crossword;
@@ -80,12 +84,17 @@ public class CrosswordPlacement {
     // Generates SOUTH-EAST, starting at [0,0]
     public void generate() {
         Set<Integer> seenClues = new HashSet<>();
+        seenClues.add(-1);
         for (int row = 0; row < crossword.height(); row++) {
             for (int col = 0; col < crossword.width(); col++) {
                 char cell = crossword.grid()[row][col];
                 BlockData toPlace = (cell == '.') ? Material.BLACK_CONCRETE.createBlockData() : Material.WHITE_CONCRETE.createBlockData();
                 world.setBlockData(position.blockX() + col, position.blockY() - 1, position.blockZ() + row, toPlace);
-                if (cell != '.') spawnGridLines(position.blockX() + col + 1.0f, position.blockY(), position.blockZ() + row + 1.0f);
+
+                if (cell != '.') {
+                    spawnGridLines(position.blockX() + col + 1.0f, position.blockY(), position.blockZ() + row + 1.0f);
+                    placeLetterFrame(position.blockX() + col, position.blockY(), position.blockZ() + row);
+                }
 
                 int across = crossword.acrossIndex()[row][col];
                 int down = crossword.downIndex()[row][col];
@@ -261,6 +270,10 @@ public class CrosswordPlacement {
         return (location.getWorld() == this.world && this.boundingBox.contains(location.getX(),location.getY(),location.getZ()));
     }
 
+    public boolean isInsideGrid(Entity entity) {
+        return (entity.getWorld() == this.world && this.boundingBox.contains(entity.getX(),entity.getY(),entity.getZ()));
+    }
+
     public void removeTextDisplays() {
         world.getEntities().forEach(entity -> {
             if (entity.getScoreboardTags().contains(this.tag)) {
@@ -363,4 +376,13 @@ public class CrosswordPlacement {
         });
     }
 
+    public void placeLetterFrame(double x, double y, double z) {
+        Location location = new Location(world, x, y, z);
+        ItemFrame frame = world.spawn(location, ItemFrame.class);
+
+        frame.setFacingDirection(BlockFace.UP);
+        frame.setVisible(false);
+
+        frame.addScoreboardTag(id.toString().replace("-", ""));
+    }
 }

@@ -1,0 +1,6 @@
+{
+  "parent": "craftword:item/template_letter",
+  "textures": {
+    "letter": "craftword:item/letter__y"
+  }
+}
