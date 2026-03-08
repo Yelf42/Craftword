@@ -125,6 +125,79 @@ public class CrosswordParser {
         }
     }
 
+    // --- AmuseLabs (LA Times, LA Times Mini, etc.) ---
+
+    private static class AmuseLabsJson {
+        String title, author, editor, copyright;
+        AmuseLabsBox[] box;         // flat array of cells, row-major
+        AmuseLabsClues[] clues;     // clue groups
+        int w, h;                   // width, height (sometimes "Width"/"Height")
+        int Width, Height;
+    }
+
+    private static class AmuseLabsBox {
+        String letter;     // answer letter, or null/empty for black square
+        String clueNum;    // displayed number, or null
+        boolean isBlack;
+        // Sometimes the field is named differently; check at runtime
+    }
+
+    private static class AmuseLabsClues {
+        String title;              // "Across" or "Down"
+        AmuseLabsClue[] clues;
+    }
+
+    private static class AmuseLabsClue {
+        int number;
+        String clue;
+        int[] cells;               // flat indices into box[]
+    }
+
+    public static Crossword parseAmuseLabs(String site, String date, String json) {
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+
+        int width  = root.get("w").getAsInt();
+        int height = root.get("h").getAsInt();
+        String title     = root.has("title")     ? root.get("title").getAsString()     : "";
+        String author    = root.has("author")    ? root.get("author").getAsString()    : "";
+        String copyright = root.has("copyright") ? root.get("copyright").getAsString() : "";
+
+        // box is column-major: box[col][row]
+        JsonArray boxArray = root.getAsJsonArray("box");
+        char[][] grid = new char[height][width];
+        for (int col = 0; col < width; col++) {
+            JsonArray column = boxArray.get(col).getAsJsonArray();
+            for (int row = 0; row < height; row++) {
+                String cell = column.get(row).getAsString();
+                grid[row][col] = (cell.equals("\u0000") || cell.isEmpty()) ? '.' : cell.charAt(0);
+            }
+        }
+
+        // Clues from placedWords, sorted puz-style: by y, then x, then across-before-down
+        Map<Integer, Clue> acrossClues = new HashMap<>();
+        Map<Integer, Clue> downClues   = new HashMap<>();
+
+        JsonArray placedWords = root.getAsJsonArray("placedWords");
+        for (JsonElement wordEl : placedWords) {
+            JsonObject word = wordEl.getAsJsonObject();
+            int number = word.get("clueNum").getAsInt();
+            String clueText = word.getAsJsonObject("clue").get("clue").getAsString();
+            boolean isAcross = word.get("acrossNotDown").getAsBoolean();
+            if (isAcross) acrossClues.put(number, new Clue(number, clueText));
+            else          downClues.put(number, new Clue(number, clueText));
+        }
+
+        return new Crossword(title, author, "", copyright, date, site,
+                width, height, grid, acrossClues, downClues,
+                buildAcrossIndex(grid, width, height),
+                buildDownIndex(grid, width, height));
+    }
+
+    private static boolean allNegOne(int[][] arr) {
+        for (int[] row : arr) for (int v : row) if (v != -1) return false;
+        return true;
+    }
+
     // --- Grid builders (unchanged) ---
 
     private static char[][] buildGrid(String allAnswer, int width, int height) {

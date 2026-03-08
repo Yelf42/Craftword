@@ -52,6 +52,16 @@ public record Crossword(
 
         return gson.fromJson(json, Crossword.class);
     }
+
+    public int countChars() {
+        int count = 0;
+        for (int row = 0; row < height; row++) {
+            for (int col = 0; col < width; col++) {
+                if (grid[row][col] != '.') count++;
+            }
+        }
+        return count;
+    }
 }
 
 record Clue(

@@ -6,10 +6,16 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 import org.bukkit.*;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.FaceAttachable;
+import org.bukkit.block.data.type.Switch;
 import org.bukkit.entity.*;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
@@ -19,11 +25,6 @@ import org.joml.Vector3f;
 
 import java.util.*;
 
-
-// TODO store current placed letters (passed from onPlayerInteract),
-//  store number of placed letters to compare to total letters,
-//  check answer if num letters matches max
-//  regen on plugin onEnable
 public class CrosswordPlacement {
 
     private final Crossword crossword;
@@ -31,24 +32,27 @@ public class CrosswordPlacement {
     private final World world;
     private BukkitTask tickTask;
 
+    private char[][] currentGrid;
+    private int numLetters;
+    private int currNumLetters;
+
     private final UUID id;
     private final String tag;
+
+    private Set<UUID> requestedHint = new HashSet<>();
+    private UUID hintTextDisplay;
 
     private BoundingBox boundingBox;
 
     public CrosswordPlacement(Crossword crossword, BlockPosition position, World world) {
-        this.crossword = crossword;
-        this.position = position;
-        this.world = world;
-
-        this.id = UUID.randomUUID();
-        this.tag = id.toString().replace("-", "");
-
-        this.boundingBox = new BoundingBox(position.blockX(), position.blockY() - 1, position.blockZ(),
-                position.blockX() + crossword.width(), position.blockY() + 3, position.blockZ() + crossword.height());
+        this(crossword, position, world, UUID.randomUUID());
     }
 
     public CrosswordPlacement(Crossword crossword, BlockPosition position, World world, UUID id) {
+        this(crossword, position, world, id, null);
+    }
+
+    public CrosswordPlacement(Crossword crossword, BlockPosition position, World world, UUID id, UUID hintID) {
         this.crossword = crossword;
         this.position = position;
         this.world = world;
@@ -56,7 +60,16 @@ public class CrosswordPlacement {
         this.id = id;
         this.tag = id.toString().replace("-", "");
 
-        this.boundingBox = new BoundingBox(position.blockX(), position.blockY() - 1, position.blockZ(),
+        this.hintTextDisplay = hintID;
+
+        this.numLetters = crossword.countChars();
+        this.currNumLetters = 0;
+        this.currentGrid = new char[crossword.height()][crossword.width()];
+        for (char[] row : this.currentGrid) {
+            Arrays.fill(row, '.');
+        }
+
+        this.boundingBox = new BoundingBox(position.blockX(), position.blockY() - 2, position.blockZ(),
                 position.blockX() + crossword.width(), position.blockY() + 3, position.blockZ() + crossword.height());
     }
 
@@ -76,8 +89,20 @@ public class CrosswordPlacement {
         return id;
     }
 
-    private String getTag() {
-        return "\"" + tag + "\""; //id.toString().replace("-", "");
+    public String getTag() {
+        return tag;
+    }
+
+    public UUID getHintTextDisplay() {
+        return hintTextDisplay;
+    }
+
+    public void addHintRequest(UUID uuid) {
+        this.requestedHint.add(uuid);
+    }
+
+    private int hintTarget() {
+        return Math.clamp(Bukkit.getOnlinePlayers().size(), Craftword.CONFIG.minHint(), Craftword.CONFIG.maxHint());
     }
 
     // Called the first time to build the visual elements in the world
@@ -90,6 +115,10 @@ public class CrosswordPlacement {
                 char cell = crossword.grid()[row][col];
                 BlockData toPlace = (cell == '.') ? Material.BLACK_CONCRETE.createBlockData() : Material.WHITE_CONCRETE.createBlockData();
                 world.setBlockData(position.blockX() + col, position.blockY() - 1, position.blockZ() + row, toPlace);
+
+                world.setBlockData(position.blockX() + col, position.blockY(), position.blockZ() + row, Material.AIR.createBlockData());
+                world.setBlockData(position.blockX() + col, position.blockY() + 1, position.blockZ() + row, Material.AIR.createBlockData());
+                world.setBlockData(position.blockX() + col, position.blockY() + 2, position.blockZ() + row, Material.AIR.createBlockData());
 
                 if (cell != '.') {
                     spawnGridLines(position.blockX() + col + 1.0f, position.blockY(), position.blockZ() + row + 1.0f);
@@ -107,8 +136,158 @@ public class CrosswordPlacement {
                 }
             }
         }
+        world.setBlockData(position.blockX() - 1, position.blockY() - 1, position.blockZ() - 1, Material.BLUE_CONCRETE.createBlockData());
+
+        Switch button = (Switch) Material.POLISHED_BLACKSTONE_BUTTON.createBlockData();
+        button.setAttachedFace(FaceAttachable.AttachedFace.FLOOR);
+        button.setFacing(BlockFace.NORTH);
+        world.setBlockData(position.blockX() - 1, position.blockY(), position.blockZ() - 1, button);
+        world.setBlockData(position.blockX() - 1, position.blockY() + 1, position.blockZ() - 1, Material.AIR.createBlockData());
+        world.setBlockData(position.blockX() - 1, position.blockY() + 2, position.blockZ() - 1, Material.AIR.createBlockData());
 
         spawnMetadata(position.blockX() + crossword.height() / 2.0F, position.blockY() + 0.5F, position.blockZ() - 2.0F);
+    }
+
+    public void modifyCurrentGrid(ItemStack newItem, Location location) {
+        var XZ = locationToCell(location);
+        char n = '.';
+        if (newItem.getType() != Material.AIR) {
+            NamespacedKey model = newItem.getItemMeta().getItemModel();
+            if (model == null) throw new IllegalStateException("Item on crossword board is illegal");
+            String letter = model.toString().substring(model.toString().length() - 1).toUpperCase();
+            n = letter.charAt(0);
+        }
+        modifyCurrentGrid(n, XZ);
+    }
+
+    public void modifyCurrentGrid(char n, Location location) {
+        var XZ = locationToCell(location);
+        modifyCurrentGrid(n, XZ);
+    }
+
+    public void modifyCurrentGrid(char n, Pair<Integer, Integer> XZ) {
+        char p = this.currentGrid[XZ.getLeft()][XZ.getRight()];
+        if (n == '.') {
+            if (p != '.') {
+                this.currentGrid[XZ.getLeft()][XZ.getRight()] = '.';
+                this.currNumLetters -= 1;
+            }
+        } else {
+            this.currentGrid[XZ.getLeft()][XZ.getRight()] = n;
+            this.currNumLetters += (p != '.') ? 0 : 1;
+        }
+
+        if (n != '.') Bukkit.getLogger().info(XZ.getLeft() +", " +XZ.getRight() + " | " + this.currentGrid[XZ.getLeft()][XZ.getRight()] + " [" + this.crossword.grid()[XZ.getLeft()][XZ.getRight()] + "]" + " | " + this.currNumLetters);
+
+        if (this.numLetters == this.currNumLetters) verifyGrid();
+    }
+
+    private void verifyGrid() {
+        Bukkit.getLogger().info("Verifying grid");
+        for (int row = 0; row < crossword.height(); row++) {
+            for (int col = 0; col < crossword.width(); col++) {
+                char cell = crossword.grid()[row][col];
+                if (cell == '.') continue;
+                char check = this.currentGrid[row][col];
+                if (cell != check) return;
+            }
+        }
+
+        for (int row = 0; row < crossword.height(); row++) {
+            for (int col = 0; col < crossword.width(); col++) {
+                char cell = crossword.grid()[row][col];
+                if (cell == '.') continue;
+                world.setBlockData(position.blockX() + col, position.blockY() - 1, position.blockZ() + row, Material.LIME_CONCRETE.createBlockData());
+            }
+        }
+
+        world.setBlockData(position.blockX() - 1, position.blockY(), position.blockZ() - 1, Material.AIR.createBlockData());
+
+        spawnFireworks();
+    }
+
+    private void spawnFireworks() {
+        FireworkEffect effect = FireworkEffect.builder()
+                .with(FireworkEffect.Type.BALL)
+                .withColor(Color.GREEN)
+                .withFade(Color.LIME)
+                .trail(true)
+                .flicker(true)
+                .build();
+
+        List<Location> corners = List.of(
+                new Location(world, this.boundingBox.getMinX(), this.position.blockY(), this.boundingBox.getMinZ()),
+                new Location(world, this.boundingBox.getMaxX(), this.position.blockY(), this.boundingBox.getMinZ()),
+                new Location(world, this.boundingBox.getMinX(), this.position.blockY(), this.boundingBox.getMaxZ()),
+                new Location(world, this.boundingBox.getMaxX(), this.position.blockY(), this.boundingBox.getMaxZ())
+        );
+
+        for (Location corner : corners) {
+            Firework fw = world.spawn(corner, Firework.class);
+            FireworkMeta meta = fw.getFireworkMeta();
+            meta.addEffect(effect);
+            meta.setPower(0);
+            fw.setFireworkMeta(meta);
+        }
+    }
+
+    private void markGrid() {
+        for (int row = 0; row < crossword.height(); row++) {
+            for (int col = 0; col < crossword.width(); col++) {
+                char cell = crossword.grid()[row][col];
+                if (cell == '.') continue;
+                char check = this.currentGrid[row][col];
+                if (cell == check && world.getBlockAt(position.blockX() + col, position.blockY() - 1, position.blockZ() + row).getType() != Material.LIME_CONCRETE) {
+                    world.setBlockData(position.blockX() + col, position.blockY() - 1, position.blockZ() + row, Material.LIME_CONCRETE.createBlockData());
+                }
+            }
+        }
+    }
+
+    private Pair<Integer, Integer> locationToCell(Location location) {
+        return new ImmutablePair<>(
+                location.getBlockZ() - this.position.blockZ(), // row
+                location.getBlockX() - this.position.blockX()  // col
+        );
+    }
+
+    public boolean isInsideGridLined(Location location) {
+        return (location.getWorld() == this.world && this.boundingBox.clone().expand(1, 0, 1).contains(location.getX(),location.getY(),location.getZ()));
+    }
+
+    public boolean isInsideGrid(Location location, boolean edge) {
+        return (edge) ? isInsideGridLined(location) : isInsideGrid(location);
+    }
+
+    public boolean isInsideGrid(Location location) {
+        return (location.getWorld() == this.world && this.boundingBox.contains(location.getX(),location.getY(),location.getZ()));
+    }
+
+    public boolean isInsideGrid(Entity entity) {
+        return (entity.getWorld() == this.world && this.boundingBox.contains(entity.getX(),entity.getY(),entity.getZ()));
+    }
+
+    public boolean overlappingBoundingBox(CrosswordPlacement cp) {
+        return this.boundingBox.overlaps(cp.boundingBox.clone().expand(2)) && this.world == cp.world;
+    }
+
+    public void removeTextDisplays() {
+        int minChunkX = (int) this.boundingBox.getMinX() >> 4;
+        int minChunkZ = (int) this.boundingBox.getMinZ() >> 4;
+        int maxChunkX = (int) this.boundingBox.getMaxX() >> 4;
+        int maxChunkZ = (int) this.boundingBox.getMaxZ() >> 4;
+
+        for (int cx = minChunkX; cx <= maxChunkX; cx++) {
+            for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
+                world.getChunkAt(cx, cz).load();
+            }
+        }
+
+        world.getEntities().forEach(entity -> {
+            if (entity.getScoreboardTags().contains(this.tag)) {
+                entity.remove();
+            }
+        });
     }
 
     // Starts the 3-tick update loop
@@ -150,6 +329,22 @@ public class CrosswordPlacement {
                 }
             }
         });
+        if (this.hintTextDisplay == null) {
+            this.hintTextDisplay = spawnHintDisplay(position.blockX() - 0.5F, position.blockY() + 0.75F, position.blockZ() - 0.5F);
+        } else {
+            Entity e = world.getEntity(this.hintTextDisplay);
+            if (e instanceof TextDisplay td) {
+                if (world.getBlockAt(position.blockX() - 1, position.blockY(), position.blockZ() - 1).getType() == Material.AIR) {
+                    td.text(Component.text("You Win!").color(NamedTextColor.GREEN));
+                } else {
+                    td.text(hintText());
+                }
+            }
+        }
+        if (this.requestedHint.size() >= hintTarget()) {
+            this.requestedHint.clear();
+            markGrid();
+        }
     }
 
     private static final Key TOP_FONT = Key.key("craftword", "monocraft_shifted_up");
@@ -266,22 +461,6 @@ public class CrosswordPlacement {
                 .build();
     }
 
-    public boolean isInsideGrid(Location location) {
-        return (location.getWorld() == this.world && this.boundingBox.contains(location.getX(),location.getY(),location.getZ()));
-    }
-
-    public boolean isInsideGrid(Entity entity) {
-        return (entity.getWorld() == this.world && this.boundingBox.contains(entity.getX(),entity.getY(),entity.getZ()));
-    }
-
-    public void removeTextDisplays() {
-        world.getEntities().forEach(entity -> {
-            if (entity.getScoreboardTags().contains(this.tag)) {
-                entity.remove();
-            }
-        });
-    }
-
     private static final Transformation TRANSFORM_E = new Transformation(
             new Vector3f(-0.035f, -0.6f, 0.0f),
             new AxisAngle4f(0, 0, 0, 1),
@@ -323,7 +502,8 @@ public class CrosswordPlacement {
                 display.setLineWidth(200);
                 display.setTransformation(transform);
                 display.setRotation(0.0f, -90.0f);
-                display.addScoreboardTag(id.toString().replace("-", ""));
+                display.addScoreboardTag(this.tag);
+                display.addScoreboardTag("craftword");
                 display.setPersistent(true);
             });
         }
@@ -348,7 +528,8 @@ public class CrosswordPlacement {
             display.setLineWidth(200);
             display.setTransformation(TRANSFORM_CLUE);
             display.setRotation(0.0f, -90.0f);
-            display.addScoreboardTag(id.toString().replace("-", ""));
+            display.addScoreboardTag(this.tag);
+            display.addScoreboardTag("craftword");
             display.setPersistent(true);
         });
     }
@@ -364,16 +545,39 @@ public class CrosswordPlacement {
                     .append(Component.text(crossword.site() + " : " + crossword.date()).color(NamedTextColor.GRAY))
                     .build());
             display.setAlignment(TextDisplay.TextAlignment.CENTER);
-            //display.setDefaultBackground(false);
-            //display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
             display.setShadowed(false);
             display.setSeeThrough(false);
             display.setLineWidth(200);
             display.setTransformation(TRANSFORM_CLUE);
             display.setBillboard(Display.Billboard.VERTICAL);
-            display.addScoreboardTag(id.toString().replace("-", ""));
+            display.addScoreboardTag(this.tag);
+            display.addScoreboardTag("craftword");
             display.setPersistent(true);
         });
+    }
+
+    private UUID spawnHintDisplay(float x, float y, float z) {
+        Location location = new Location(world, x, y, z);
+        return world.spawn(location, TextDisplay.class, display -> {
+            display.text(hintText());
+            display.setAlignment(TextDisplay.TextAlignment.CENTER);
+            display.setShadowed(false);
+            display.setSeeThrough(false);
+            display.setLineWidth(200);
+            display.setBillboard(Display.Billboard.VERTICAL);
+            display.addScoreboardTag(this.tag);
+            display.addScoreboardTag("craftword");
+            display.addScoreboardTag("hint");
+            display.setPersistent(true);
+        }).getUniqueId();
+    }
+
+    private Component hintText() {
+        return Component.text()
+                .append(Component.text("Check Grid:").color(NamedTextColor.BLUE).decorate(TextDecoration.BOLD))
+                .append(Component.newline())
+                .append(Component.text(this.requestedHint.size() + " / " + hintTarget()).color(NamedTextColor.WHITE))
+                .build();
     }
 
     public void placeLetterFrame(double x, double y, double z) {
@@ -383,6 +587,6 @@ public class CrosswordPlacement {
         frame.setFacingDirection(BlockFace.UP);
         frame.setVisible(false);
 
-        frame.addScoreboardTag(id.toString().replace("-", ""));
+        frame.addScoreboardTag(this.tag);
     }
 }
