@@ -25,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static yelf42.craftword.AmuseLabsDownloader.extractAndDeobfuscateRawc;
 import static yelf42.craftword.AmuseLabsDownloader.fetchAmuseLabsToken;
@@ -129,9 +130,17 @@ public final class Craftword extends JavaPlugin {
         LiteralCommandNode<CommandSourceStack> clear = Commands.literal("clear_cache").requires(sender -> sender.getSender().isOp())
                 .executes(ctx -> {
                     File crosswordsFolder = new File(getDataFolder(), "crosswords");
+
+                    Set<String> safe = activePlacements
+                            .stream()
+                            .map(crosswordPlacement ->
+                                    crosswordPlacement.getCrossword().site().toLowerCase() + "-" + crosswordPlacement.getCrossword().date() + ".json")
+                            .collect(Collectors.toSet());
+
                     File[] files = crosswordsFolder.listFiles();
                     if (files != null) {
                         for (File file : files) {
+                            if (safe.contains(file.getName())) continue;
                             file.delete();
                         }
                     }
@@ -275,6 +284,7 @@ public final class Craftword extends JavaPlugin {
         this.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands -> {
             //commands.registrar().register(fetch);
             //commands.registrar().register(fetchRaw);
+            commands.registrar().register(clear);
             commands.registrar().register(buildNew);
             commands.registrar().register(remove);
             commands.registrar().register(hintLimits);
