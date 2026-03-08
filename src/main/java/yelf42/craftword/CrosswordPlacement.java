@@ -177,13 +177,13 @@ public class CrosswordPlacement {
             this.currNumLetters += (p != '.') ? 0 : 1;
         }
 
-        if (n != '.') Bukkit.getLogger().info(XZ.getLeft() +", " +XZ.getRight() + " | " + this.currentGrid[XZ.getLeft()][XZ.getRight()] + " [" + this.crossword.grid()[XZ.getLeft()][XZ.getRight()] + "]" + " | " + this.currNumLetters);
+        //if (n != '.') Bukkit.getLogger().info(XZ.getLeft() +", " +XZ.getRight() + " | " + this.currentGrid[XZ.getLeft()][XZ.getRight()] + " [" + this.crossword.grid()[XZ.getLeft()][XZ.getRight()] + "]" + " | " + this.currNumLetters);
 
         if (this.numLetters == this.currNumLetters) verifyGrid();
     }
 
     private void verifyGrid() {
-        Bukkit.getLogger().info("Verifying grid");
+        //Bukkit.getLogger().info("Verifying grid");
         for (int row = 0; row < crossword.height(); row++) {
             for (int col = 0; col < crossword.width(); col++) {
                 char cell = crossword.grid()[row][col];
