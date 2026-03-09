@@ -6,7 +6,7 @@ The plugin does require a resource-pack, which is included by default. If you wa
 
 To access the letters, sign a *Book and Quill* with the title ```Alphabet```
 
-[Video Demonstration](https://www.youtube.com/watch?v=Cy4U5hZ5rfQ)
+[Video Demonstration](https://www.youtube.com/watch?v=O8iCT602LG4)
 
 ## Commands
 ``/craftword:build_new <dimension> <at: x y z> <site> [<yyyy-mm-dd>]``</br>
